@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.DS_Store
+data/CIC-IDS-2024/
