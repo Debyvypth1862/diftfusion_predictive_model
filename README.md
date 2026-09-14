@@ -86,8 +86,7 @@ tests. Expect roughly 45 minutes on a CPU workstation.
 
 ## Datasets
 
-Both streams used are public. Raw data files are not included in this
-repository (see `.gitignore`).
+Both streams used are public.
 
 - **NOAA weather stream**: National Centers for Environmental Information
   (NCEI), Global Summary of the Day (GSOD), station 72530094846 (Chicago
