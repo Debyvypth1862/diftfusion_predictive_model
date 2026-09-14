@@ -42,7 +42,7 @@ driftfusion/
 │   └── meta_adapter.py          # Drift-conditioned adaptation with EWC
 ├── data/
 │   ├── noaa_weather.py          # NOAA GSOD weather stream loader
-│   ├── cic_unsw_nb15.py         # CIC-UNSW-NB15 stream loader with drift injection
+│   ├── cic_unsw_nb15.py         # CIC-UNSW-NB15 (CIC-IDS-2024) loader + drift injection
 │   └── preprocessing.py         # Cleaning, mRMR feature selection, running normalisation
 ├── baselines/
 │   └── streaming_baselines.py   # Adaptive Random Forest, ADWIN+Hoeffding Tree
@@ -52,7 +52,7 @@ driftfusion/
 │                                #   backward transfer, significance tests
 ├── experiments/
 │   ├── run_weather.py           # Full experiment on the NOAA weather stream
-│   ├── run_cic_unsw.py          # Full experiment on the CIC-UNSW-NB15 stream
+│   ├── run_cic_unsw.py          # Full experiment on the CIC-UNSW-NB15 (CIC-IDS-2024) stream
 │   ├── make_figures.py          # Regenerates all results figures from real runs
 │   ├── collect_full_metrics.py  # Single pass: every reported metric, table and figure
 │   ├── drift_per_seed.py        # Per-seed drift-type behaviour
@@ -73,7 +73,7 @@ results were produced on a single CPU workstation.
 ```bash
 python -m driftfusion.experiments.collect_full_metrics  # Every reported number + all figures
 python -m driftfusion.experiments.run_weather           # NOAA weather stream alone
-python -m driftfusion.experiments.run_cic_unsw          # CIC-UNSW-NB15 stream alone
+python -m driftfusion.experiments.run_cic_unsw          # CIC-UNSW-NB15 (CIC-IDS-2024) stream alone
 python -m driftfusion.experiments.validate_figures      # 21 structural checks against the diagrams
 ```
 
@@ -93,7 +93,7 @@ repository (see `.gitignore`).
   (NCEI), Global Summary of the Day (GSOD), station 72530094846 (Chicago
   O'Hare International Airport, IL).
   https://www.ncei.noaa.gov/access/search/data-search/global-summary-of-the-day
-- **CIC-UNSW-NB15 stream**: Canadian Institute for Cybersecurity (CIC),
+- **CIC-UNSW-NB15 (CIC-IDS-2024) stream**: Canadian Institute for Cybersecurity (CIC),
   University of New Brunswick.
   https://www.unb.ca/cic/datasets/cic-unsw-nb15.html
 
@@ -105,9 +105,9 @@ Hoeffding Tree, across five seeds with paired statistical testing:
 | Stream | Accuracy | Macro F1 | vs ARF | vs ADWIN+HT |
 |---|---|---|---|---|
 | NOAA weather | 0.797 | 0.774 | significantly better on macro-F1 (p=0.019); accuracy p=0.051, not claimed | significantly better |
-| CIC-UNSW-NB15 | 0.971 | 0.969 | significantly worse by 1.1 points (p=0.015) | significantly better by 9.0 points |
+| CIC-UNSW-NB15 (CIC-IDS-2024) | 0.971 | 0.969 | significantly worse by 1.1 points (p=0.015) | significantly better by 9.0 points |
 
-On the CIC-UNSW-NB15 stream the Vulnerability Window (mean windows below 85%
+On the CIC-UNSW-NB15 (CIC-IDS-2024) stream the Vulnerability Window (mean windows below 85%
 accuracy following a drift onset) is zero for every configuration of the
 framework and for ARF, against 6.50 for the lighter baseline; recovery speed
 shows the same contrast at 0.00 against 13.00 windows.
@@ -119,10 +119,11 @@ Component ablation is reported in full, including where it is unfavourable:
   margin over that baseline comes from the adaptation procedure rather than
   from the meta-training that precedes it.
 - **Drift-typed adaptation reduces forgetting** on both streams relative to a
-  uniform response (0.069 → 0.059 on weather, 0.029 → 0.019 on CIC).
+  uniform response (0.069 → 0.059 on weather, 0.029 → 0.019 on the
+  security stream).
 - **The context-conditioned prediction module does not earn its cost.**
   Removing it leaves accuracy and macro-F1 unchanged on the weather stream,
-  improves both by roughly a point on CIC-UNSW-NB15, improves forgetting on
+  improves both by roughly a point on CIC-UNSW-NB15 (CIC-IDS-2024), improves forgetting on
   both, and cuts per-window processing time by more than an order of
   magnitude.
 - **The EWC retention penalty exerts no force.** With and without it the
