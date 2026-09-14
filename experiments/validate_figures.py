@@ -46,10 +46,10 @@ def main():
     clf = train_drift_classifier(n_per_class=300, epochs=12, verbose=False, seed=0)
     model = DriftFusionModel(input_dim=X.shape[1], drift_classifier=clf, seed=0)
 
-    fired = {"conv": 0, "attn": 0, "cross_attn": 0, "fusion": 0, "fallback": 0,
+    fired = {"lstm": 0, "mlp": 0, "cross_attn": 0, "fusion": 0, "fallback": 0,
              "value_proj": 0, "label_embed": 0}
-    model.drift_classifier.conv.register_forward_hook(lambda *_: fired.__setitem__("conv", fired["conv"] + 1))
-    model.drift_classifier.attn.register_forward_hook(lambda *_: fired.__setitem__("attn", fired["attn"] + 1))
+    model.drift_classifier.lstm.register_forward_hook(lambda *_: fired.__setitem__("lstm", fired["lstm"] + 1))
+    model.drift_classifier.mlp.register_forward_hook(lambda *_: fired.__setitem__("mlp", fired["mlp"] + 1))
     p = model.predictor.model
     p.cross_attn.register_forward_hook(lambda *_: fired.__setitem__("cross_attn", fired["cross_attn"] + 1))
     p.fusion_head.register_forward_hook(lambda *_: fired.__setitem__("fusion", fired["fusion"] + 1))
@@ -99,8 +99,11 @@ def main():
           f"{len(FINGERPRINT_NAMES)}-dim vector (BOCPD/performance/distributional)")
     check("7.2", "Sequence Buffer", model.fingerprint.buffer.maxlen == 10,
           f"buffer depth={model.fingerprint.buffer.maxlen}")
-    check("7.2", "1D Convolution", fired["conv"] > 0, f"conv fired {fired['conv']}x")
-    check("7.2", "Self-Attention", fired["attn"] > 0, f"self-attn fired {fired['attn']}x")
+    check("7.2", "LSTM Encoder", fired["lstm"] > 0
+          and model.drift_classifier.lstm.num_layers == 1,
+          f"lstm fired {fired['lstm']}x, layers={model.drift_classifier.lstm.num_layers}, "
+          f"hidden={model.drift_classifier.lstm.hidden_size}")
+    check("7.2", "Final Hidden State -> MLP Head", fired["mlp"] > 0, f"mlp head fired {fired['mlp']}x")
     check("7.2", "Category Taxonomy (5)", len(CATEGORIES) == 5, f"{CATEGORIES}")
 
     # ---- Figure 7.3: Context Prediction ------------------------------

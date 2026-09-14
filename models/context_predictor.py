@@ -5,14 +5,11 @@ responding to a recognised concept change requires no gradient step --
 only a change of which memory partition is queried. A fallback direct
 head handles concepts with too few exemplars.
 
-Simplification (documented, not hidden): the proposal describes memory
-partitions keyed by "identified concept". Real streams don't come with
-ground-truth concept identities, so this implementation keys partitions
-by the *drift-type category* Module 1 assigns to the current window (5
-partitions: stable / sudden / gradual / incremental / recurring). This
-keeps the "recurring -> recall historical partition" behaviour intact
-(recurring campaigns route back to the same recurring-partition memory)
-while remaining tractable within the project's scope.
+Partitions are keyed by *concept identity*, tracked by ConceptTracker
+below, not by drift-type category. An earlier version keyed them by
+category; see the ConceptTracker docstring for why that was corrected.
+
+Meta-training uses first-order MAML: see pretrain_context_predictor.
 """
 
 from __future__ import annotations
@@ -24,10 +21,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .meta_adapter import focal_loss
+
 D_MODEL = 128
 N_HEADS = 4
 MIN_EXEMPLARS = 5
 MEMORY_CAPACITY = 200
+
+# First-order MAML meta-training (Finn, Abbeel and Levine, 2017). The inner
+# loop adapts on an episode's support set with the same focal objective and
+# the same plain-SGD form the online adapter uses at deployment; the outer
+# objective is then evaluated at those *adapted* parameters, so what is
+# optimised is an initialisation from which a short update generalises,
+# rather than one that merely fits the calibration data.
+#
+# The meta-gradient is first-order: the query gradient taken at the adapted
+# parameters is applied to the pre-adaptation parameters, without
+# differentiating through the inner step. The second-order term would
+# require retaining the inner graph across every episode, and Finn et al.
+# report first-order MAML performing comparably at a fraction of the cost.
+FOMAML_INNER_LR = 0.01
+FOMAML_INNER_STEPS = 1
 
 
 class ConceptTracker:
@@ -155,7 +169,9 @@ def pretrain_context_predictor(model: "ContextPredictor", X_calib: np.ndarray, y
                                 epochs: int = 300, lr: float = 1e-3, seed: int = 0,
                                 support_size: int = MEMORY_CAPACITY,
                                 query_size: int = 128, val_frac: float = 0.2,
-                                eval_every: int = 10) -> None:
+                                eval_every: int = 10,
+                                inner_lr: float = FOMAML_INNER_LR,
+                                inner_steps: int = FOMAML_INNER_STEPS) -> None:
     """Meta-training bootstrap for Module 2 (Section 7.4: the fallback head
     "relies solely on the model parameters learned during meta-training").
 
@@ -168,10 +184,21 @@ def pretrain_context_predictor(model: "ContextPredictor", X_calib: np.ndarray, y
     that gap online, which is precisely the regime the context path is
     supposed to serve.
 
-    The context path is trained episodically: each epoch samples a support
-    set (standing in for a memory partition) and a disjoint query set, and
-    asks the model to classify the queries given the labelled support --
-    the same conditional prediction it performs at inference.
+    Each epoch is one first-order MAML episode. A support set (standing in
+    for a memory partition) and a disjoint query set are sampled; the inner
+    loop adapts on the support set with the same focal objective and plain
+    SGD the online adapter uses, and the outer objective is evaluated at
+    those *adapted* parameters before its gradient is applied to the
+    pre-adaptation weights. What is optimised is therefore an initialisation
+    from which the short per-window update generalises, not one that merely
+    fits the calibration rows -- the distinction that matters here, because
+    at deployment the model only ever gets a handful of steps per window.
+
+    The outer objective keeps both paths: the direct head on the query rows,
+    and the context path classifying those same rows given the labelled
+    support -- the same conditional prediction performed at inference. The
+    disjoint split is what forces the context path to read the support
+    labels rather than memorise the calibration data.
 
     Training is validated and the best-scoring weights retained. Without
     this the context path was observed to reach ~94% episodic accuracy and
@@ -211,28 +238,58 @@ def pretrain_context_predictor(model: "ContextPredictor", X_calib: np.ndarray, y
 
     for ep in range(epochs):
         model.train()
-        opt.zero_grad()
 
-        logits_fb = model.forward_fallback(model.embed(x_tr))
-        loss = F.cross_entropy(logits_fb, y_tr)
-
-        # Episodic pass: disjoint support/query split so the context path
-        # must actually read the support labels rather than memorise.
+        # Sample one task: a support set standing in for a memory partition
+        # and a disjoint query set, so the context path must read the
+        # support labels rather than memorise the calibration data.
         sup_idx = qry_idx = None
         if n >= MIN_EXEMPLARS * 2:
             perm = rng.permutation(n)
             n_sup = min(support_size, n // 2)
             sup_idx = perm[:n_sup]
             qry_idx = perm[n_sup:n_sup + query_size]
-            if len(qry_idx) > 0:
-                mem_h = model.embed(x_tr[sup_idx])
-                h_q = model.embed(x_tr[qry_idx])
-                logits_ctx = model.forward_with_context(h_q, mem_h, y_tr[sup_idx])
-                loss = loss + F.cross_entropy(logits_ctx, y_tr[qry_idx])
 
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
+        if sup_idx is None or len(qry_idx) == 0:
+            # Not enough calibration rows to form an episode; fall back to a
+            # plain supervised step on the direct head.
+            opt.zero_grad()
+            F.cross_entropy(model.forward_fallback(model.embed(x_tr)), y_tr).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+        else:
+            x_s, y_s = x_tr[sup_idx], y_tr[sup_idx]
+            x_q, y_q = x_tr[qry_idx], y_tr[qry_idx]
+
+            theta = [p.detach().clone() for p in model.parameters()]
+
+            # --- inner loop: adapt on the support set, exactly as the
+            # online adapter would on a newly encountered concept.
+            inner_opt = torch.optim.SGD(model.parameters(), lr=inner_lr)
+            for _ in range(inner_steps):
+                inner_opt.zero_grad()
+                focal_loss(model.forward_fallback(model.embed(x_s)), y_s).backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                inner_opt.step()
+
+            # --- outer objective, evaluated at the *adapted* parameters:
+            # the direct head on the query rows, plus the context path
+            # classifying those same rows given the labelled support.
+            loss = F.cross_entropy(model.forward_fallback(model.embed(x_q)), y_q)
+            loss = loss + F.cross_entropy(
+                model.forward_with_context(model.embed(x_q), model.embed(x_s), y_s), y_q)
+            meta_grads = torch.autograd.grad(loss, list(model.parameters()),
+                                             allow_unused=True)
+
+            # --- restore the pre-adaptation parameters and apply the
+            # first-order meta-gradient to them.
+            with torch.no_grad():
+                for p, t in zip(model.parameters(), theta):
+                    p.copy_(t)
+            opt.zero_grad()
+            for p, g in zip(model.parameters(), meta_grads):
+                p.grad = None if g is None else g.detach().clone()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
 
         if ep % eval_every == 0 or ep == epochs - 1:
             model.eval()

@@ -1,7 +1,7 @@
 """
 Generates the dissertation results figures from real runs on the two
 benchmarks the proposal specifies: the NOAA weather stream (Table 7.1) and
-CIC-UNSW-NB15 (Table 7.2).
+CIC-UNSW-NB15 (CIC-IDS-2024).
 
 The bar charts re-run the full five-seed protocol rather than reading
 cached numbers, so every figure is guaranteed consistent with the tables in
@@ -277,11 +277,18 @@ def fig_adaptation(X, y, onsets):
         ax.text(bar.get_x() + bar.get_width() / 2, v + e + 0.0008,
                 f"{v:.4f}±{e:.4f}", ha="center", fontsize=9)
     ax.set_ylim(0.790, 0.802); ax.set_ylabel("Prequential accuracy")
+    # Anchored top-left rather than centred: the centred placement collided
+    # with the right-hand bar's value label once the bars diverged.
     ax.annotate(f"difference {np.mean(ad)-np.mean(fr):+.4f}, paired p = {p:.3f}\n"
                 f"variance inflated {np.std(ad)/max(np.std(fr),1e-9):.1f}×",
-                xy=(0.5, 0.72), xycoords="axes fraction", ha="center",
+                xy=(0.03, 0.95), xycoords="axes fraction", ha="left", va="top",
                 fontsize=10, color="#c0504d")
-    ax.set_title("Online adaptation has no measurable effect on accuracy (Weather)")
+    # Derived from the test rather than hardcoded, so the title cannot state a
+    # conclusion the data no longer supports.
+    verdict = ("significantly improves accuracy" if p < 0.05 and np.mean(ad) > np.mean(fr)
+               else "significantly reduces accuracy" if p < 0.05
+               else "has no measurable effect on accuracy")
+    ax.set_title(f"Online adaptation {verdict} (Weather)")
     fig.savefig(OUT / "fig_adaptation_effect.png"); plt.close(fig)
     print(f"  adaptation: frozen={np.mean(fr):.4f} adapted={np.mean(ad):.4f} p={p:.4f}")
 
@@ -320,7 +327,7 @@ def main():
     Xw, yw, ons_w = load_weather()
     raw_w, traces_w, _ = collect(Xw, yw, W_WIN, ons_w)
 
-    print("CIC-UNSW-NB15: 5-seed collection...")
+    print("CIC-UNSW-NB15 (CIC-IDS-2024): 5-seed collection...")
     Xc, yc, ons_c, dt_c, nc_c = load_cic_unsw()
     raw_c, traces_c, pred_c = collect(Xc, yc, C_WIN, ons_c, true_dt=dt_c)
 

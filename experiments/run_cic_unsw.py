@@ -40,7 +40,7 @@ SEEDS = (0, 1, 2, 3, 4)
 def main():
     t0 = time.time()
     X_raw_arr, y, drift_types, families, _ = build_injected_stream(window_size=WINDOW_SIZE, seed=0)
-    print(f"CIC-UNSW-NB15 injected stream: {len(X_raw_arr)} flows, "
+    print(f"CIC-UNSW-NB15 (CIC-IDS-2024) injected stream: {len(X_raw_arr)} flows, "
           f"{X_raw_arr.shape[1]} raw features, attack rate={y.mean():.3f}")
     print(f"ground-truth drift schedule: {dict(Counter(drift_types))}")
 
